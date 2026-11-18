@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dloader-cli"
-version = "1.0.0"
+version = "1.0.1"
 description = "Unisoc UIS8910 通用烧写 CLI"
 authors = [
     { name = "zhengqingquan", email = "55186872+zhengqingquan@users.noreply.github.com" },

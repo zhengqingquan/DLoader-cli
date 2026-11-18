@@ -1,6 +1,7 @@
 """调用 CmdDloader.exe 完成一次烧写，并解析结果。
 
 注意：CmdDloader.exe 的进程退出码恒为 0，成功与否只能靠解析 stdout。
+烧写过程中会实时转发工具输出（分区进度等），同时保留完整输出供判据解析。
 所有面向用户的输出一律使用英文，避免控制台编码问题。
 
 占口诊断见 ``port_diag``；此处再导出常用符号，兼容旧 import 路径。
@@ -10,6 +11,8 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,6 +102,61 @@ def unsupported_skip_file_id_message(exe: str | Path, usage: str) -> str:
     )
 
 
+def _run_and_stream(
+    args: list[str], cwd: str, timeout_sec: float
+) -> tuple[str, int]:
+    """启动 CmdDloader，边跑边把 stdout（含 stderr 合并）打到控制台。
+
+    返回 (完整输出文本, 进程退出码)。超时会 kill 子进程并抛 RuntimeError。
+    """
+    chunks: list[bytes] = []
+    proc = subprocess.Popen(
+        args,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=0,
+    )
+
+    def _pump() -> None:
+        assert proc.stdout is not None
+        while True:
+            data = proc.stdout.read(256)
+            if not data:
+                break
+            chunks.append(data)
+            # 优先原样写字节，保留 CmdDloader 的 \\r 同行刷新进度；
+            # pytest/capsys 等文本重定向没有 .buffer 时再退回文本写出。
+            try:
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+            except (AttributeError, OSError, ValueError):
+                sys.stdout.write(_decode(data))
+                sys.stdout.flush()
+
+    reader = threading.Thread(target=_pump, name="cmddloader-stdout", daemon=True)
+    reader.start()
+    exit_code = -1
+    try:
+        try:
+            exit_code = proc.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired as exc:
+            proc.kill()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            raise RuntimeError(
+                f"Flash timed out (>{timeout_sec}s), process killed"
+            ) from exc
+    finally:
+        reader.join(timeout=5)
+
+    if exit_code is None:
+        exit_code = proc.returncode if proc.returncode is not None else -1
+    return _decode(b"".join(chunks)), int(exit_code)
+
+
 def invoke_flash_run(
     exe: str | Path,
     pac: str | Path,
@@ -141,22 +199,15 @@ def invoke_flash_run(
     if ver:
         print(f"    Tool  : v{ver}  ({Path(exe).name})")
     print(">>> " + " ".join(args))
+    print()
 
     start_ts = time.monotonic()
-    try:
-        proc = subprocess.run(
-            args,
-            cwd=str(Path(exe).parent),
-            capture_output=True,
-            timeout=cfg["FlashRunTimeoutSec"],
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"Flash timed out (>{cfg['FlashRunTimeoutSec']}s), process killed"
-        ) from exc
+    out, exit_code = _run_and_stream(
+        args,
+        cwd=str(Path(exe).parent),
+        timeout_sec=float(cfg["FlashRunTimeoutSec"]),
+    )
     wall_sec = time.monotonic() - start_ts
-
-    out = _decode(proc.stdout) + "\n" + _decode(proc.stderr)
 
     # 优先用输出里自带的耗时。老版本 CmdDloader(v22) 会输出
     # "Elapsed Times = 56s"，新版本(v27)不再输出该字段，
@@ -187,5 +238,5 @@ def invoke_flash_run(
         elapsed_sec=elapsed,
         port=port_val,
         imei=imei_val,
-        exit_code=proc.returncode,
+        exit_code=exit_code,
     )

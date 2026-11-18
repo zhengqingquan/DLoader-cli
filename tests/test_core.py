@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 
 import pytest
@@ -93,10 +94,27 @@ def test_decode_gbk():
 # 烧写结果解析（mock subprocess）
 # ---------------------------------------------------------------------------
 class _FakeProc:
+    """给 probe_skip_file_id 等仍走 subprocess.run 的用例用。"""
+
     def __init__(self, stdout: bytes, stderr: bytes = b"", code: int = 0):
         self.stdout = stdout
         self.stderr = stderr
         self.returncode = code
+
+
+class _FakePopen:
+    """给 invoke_flash_run 流式读取用的假进程。"""
+
+    def __init__(self, stdout: bytes, code: int = 0):
+        self.stdout = io.BytesIO(stdout)
+        self.stderr = None
+        self.returncode = code
+
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        self.returncode = -9
 
 
 def test_invoke_flash_run_success(monkeypatch, tmp_path):
@@ -106,8 +124,10 @@ def test_invoke_flash_run_success(monkeypatch, tmp_path):
     pac.write_bytes(b"x")
 
     monkeypatch.setattr(
-        "dloader.flash.subprocess.run",
-        lambda *a, **k: _FakeProc(b"DownLoad Passed, Elapsed Times = 56s\nPORT = COM17\nIMEI = 123456789012345"),
+        "dloader.flash.subprocess.Popen",
+        lambda *a, **k: _FakePopen(
+            b"DownLoad Passed, Elapsed Times = 56s\nPORT = COM17\nIMEI = 123456789012345"
+        ),
     )
 
     cfg = dict(DEFAULTS)
@@ -126,8 +146,8 @@ def test_invoke_flash_run_failure(monkeypatch, tmp_path):
     pac.write_bytes(b"x")
 
     monkeypatch.setattr(
-        "dloader.flash.subprocess.run",
-        lambda *a, **k: _FakeProc(b"Download Result = Failed; Open port fail"),
+        "dloader.flash.subprocess.Popen",
+        lambda *a, **k: _FakePopen(b"Download Result = Failed; Open port fail"),
     )
 
     cfg = dict(DEFAULTS)
@@ -137,6 +157,26 @@ def test_invoke_flash_run_failure(monkeypatch, tmp_path):
     # 输出里没有 "Elapsed Times" 时回落到本地计时，所以耗时非空
     assert isinstance(r.elapsed_sec, float)
     assert r.elapsed_sec >= 0
+
+
+def test_invoke_flash_run_streams_output(monkeypatch, tmp_path, capsys):
+    exe = tmp_path / "CmdDloader.exe"
+    exe.write_bytes(b"MZ")
+    pac = tmp_path / "a.pac"
+    pac.write_bytes(b"x")
+
+    monkeypatch.setattr(
+        "dloader.flash.subprocess.Popen",
+        lambda *a, **k: _FakePopen(b"FDL Connecting\nDownload Result = Passed;"),
+    )
+
+    cfg = dict(DEFAULTS)
+    r = invoke_flash_run(exe, pac, 17, cfg, reset=True)
+    out = capsys.readouterr().out
+
+    assert r.success is True
+    assert "FDL Connecting" in out
+    assert "Download Result = Passed;" in out
 
 
 def test_is_open_port_failure_detects_common_markers():
@@ -236,8 +276,8 @@ def test_invoke_flash_run_elapsed_fallback_v27(monkeypatch, tmp_path):
     pac.write_bytes(b"x")
 
     monkeypatch.setattr(
-        "dloader.flash.subprocess.run",
-        lambda *a, **k: _FakeProc(b"Download Result = Passed;"),
+        "dloader.flash.subprocess.Popen",
+        lambda *a, **k: _FakePopen(b"Download Result = Passed;"),
     )
 
     cfg = dict(DEFAULTS)
@@ -414,11 +454,11 @@ def test_invoke_flash_run_passes_skip_file_id(monkeypatch, tmp_path):
     pac.write_bytes(b"x")
     captured = {}
 
-    def fake_run(*a, **k):
+    def fake_popen(*a, **k):
         captured["args"] = list(a[0])
-        return _FakeProc(b"Download Result = Passed;")
+        return _FakePopen(b"Download Result = Passed;")
 
-    monkeypatch.setattr("dloader.flash.subprocess.run", fake_run)
+    monkeypatch.setattr("dloader.flash.subprocess.Popen", fake_popen)
     cfg = dict(DEFAULTS)
     r = invoke_flash_run(exe, pac, 17, cfg, reset=True, skip_file_ids="CP,TFBOOT")
 
@@ -433,11 +473,11 @@ def test_invoke_flash_run_omits_skip_flag_by_default(monkeypatch, tmp_path):
     pac.write_bytes(b"x")
     captured = {}
 
-    def fake_run(*a, **k):
+    def fake_popen(*a, **k):
         captured["args"] = list(a[0])
-        return _FakeProc(b"Download Result = Passed;")
+        return _FakePopen(b"Download Result = Passed;")
 
-    monkeypatch.setattr("dloader.flash.subprocess.run", fake_run)
+    monkeypatch.setattr("dloader.flash.subprocess.Popen", fake_popen)
     cfg = dict(DEFAULTS)
     invoke_flash_run(exe, pac, 17, cfg, reset=True)
 

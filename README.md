@@ -135,6 +135,8 @@ dloader flash --skip-file-id "BOOTLOADER,PS,MMIRes,CP,TFBOOT,OperatorData"
 
 ## 输出与提示
 
+`flash` / `loop` 烧写阶段会**实时转发** CmdDloader 的控制台输出（分区进度、Connecting 等），结束后再打印 `[OK]` / `[FAIL]` 摘要。
+
 所有输出带级别前缀，便于脚本判定和人工排查：
 
 | 前缀 | 含义 | 是否阻断 |
