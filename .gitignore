@@ -1,0 +1,36 @@
+# Python 缓存与字节码
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 打包产物
+build/
+dist/
+*.egg-info/
+*.egg
+
+# 测试与工具缓存
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# 本机运行配置：含本机绝对路径（ToolDir / Pac），每台机器不同，不入库
+dloader.config.json
+
+# 日志
+*.log

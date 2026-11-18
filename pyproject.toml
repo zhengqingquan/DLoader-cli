@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dloader-cli"
+version = "1.0.0"
+description = "Unisoc UIS8910 通用烧写 CLI"
+authors = [
+    { name = "zhengqingquan", email = "55186872+zhengqingquan@users.noreply.github.com" },
+]
+requires-python = ">=3.9"
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+dloader = "dloader.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["dloader*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
